@@ -1,0 +1,62 @@
+# ppo_yogi_adam_v0 
+PPO_Adam_Mountaincarv0 Baseline
+
+'''
+
+### Training Hyperparameters
+
+total_timesteps: 4e7        # Total training timesteps
+num_envs: 16                # Number of parallel environments
+num_steps: 4000              # Steps per rollout
+num_minibatches: 4          # Number of minibatches per epoch
+update_epochs: 64           # Number of epochs per update (reduced from 64 to 16)
+
+
+### Optimizer Configuration
+
+optimizer: adam             # Optimizer choice: yogi, adam, rmsprop, sgd
+lr: 4e-3                  # Learning rate (tested range: 4e-3 to 1e-3)
+anneal_lr: true             # Whether to use learning rate annealing
+max_grad_norm: 1.0          # Gradient clipping threshold
+
+### Yogi/Adam optimizer parameters
+beta_1: 0.9                 # First moment decay coefficient (momentum)
+beta_2: 0.999               # Second moment decay coefficient
+eps: 1e-8                   # Epsilon value (outside sqrt for Yogi, 1e-6 best from sweep)
+
+
+### PPO Algorithm Parameters
+
+gamma: 0.99                 # Discount factor
+gae_lambda: 0.95            # GAE lambda parameter
+clip_eps: 0.2               # PPO clipping parameter
+scale_clip_eps: false       # Whether to dynamically scale clip_eps
+ent_coef: 0.003             # Entropy regularization coefficient 0.003 # 0.01 for Pendulum-v1
+vf_coef: 0.5                # Value function loss coefficient
+
+
+### Network Architecture
+
+activation: ReLU             # Activation function
+fc_dim_size: 64           # Fully connected layer dimension
+
+
+### Environment Configuration
+
+env_name: MountainCar-v0  # Gymnax environment name (Pendulum-v1/MountainCar-v0)
+seed: 0                     # Random seed
+num_seeds: 10               # Number of parallel seeds to run
+'''
+
+
+
+# ppo_yogi_adam_v1 
+update_epochs（64 → 16）
+PPO works! 
+
+# ppo_yogi_adam_v2 
+num_steps（4000 → 2048）
+PPO also works, and even works better!
+
+# ppo_yogi_adam_v3 
+num_steps（2048 → 1024）
