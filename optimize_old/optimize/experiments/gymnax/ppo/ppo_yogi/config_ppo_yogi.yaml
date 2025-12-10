@@ -12,7 +12,7 @@ update_epochs: 16           # Number of epochs per update (reduced from 64 to 16
 
 # Optimizer Configuration
 
-optimizer: adam             # Optimizer choice: yogi, adam, rmsprop, sgd
+optimizer: yogi             # Optimizer choice: yogi, adam, rmsprop, sgd
 lr: 4e-3                # Learning rate (tested range: 4e-3 to 1e-3)
 anneal_lr: true             # Whether to use learning rate annealing
 max_grad_norm: 1.0          # Gradient clipping threshold
@@ -49,7 +49,7 @@ num_seeds: 10               # Number of parallel seeds to run
 # Logging & Checkpointing
 
 project: optimize_old                   # W&B project name
-job_type: ppo_yogi_adam_v4    # Experiment type label
+job_type: ppo_yogi_sweep_v3    # Experiment type label
 wandb_mode: online                      # W&B mode: online, disabled, offline
 save_model: false                       # Whether to save model checkpoints
 models_dir: ./models                    # Model save directory

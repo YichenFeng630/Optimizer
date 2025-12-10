@@ -1,0 +1,57 @@
+# ANO (Adaptive Normalized Optimizer) Configuration for PPO
+# Aligned with ppo_yogi structure
+
+# Training Hyperparameters
+
+total_timesteps: 1e6        # Total training timesteps (minimal for testing)
+num_envs: 2                  # Number of parallel environments (minimal)
+num_steps: 128               # Steps per rollout (minimal)
+num_minibatches: 1           # Number of minibatches per epoch (minimal)
+update_epochs: 2             # Number of epochs per update (minimal)
+
+
+# Optimizer Configuration
+
+optimizer: ano              # Optimizer choice: ano, adam, yogi, rmsprop, sgd
+lr: 1e-3                   # Learning rate (reduced from 4e-3)
+anneal_lr: true             # Whether to use learning rate annealing
+max_grad_norm: 1.0          # Gradient clipping threshold
+
+# ANO/Adam optimizer parameters
+beta_1: 0.92               # First moment decay coefficient (momentum) - recommended for ANO
+beta_2: 0.99               # Second moment decay coefficient (reduced from 0.999)
+eps: 1e-8                  # Epsilon value (default: 1e-8)
+
+# ANO specific options
+weight_decay: 0.0           # L2 weight decay
+logarithmic_schedule: false # Use logarithmic beta_1 schedule (Anolog) if true
+
+
+# PPO Algorithm Parameters
+
+gamma: 0.99                 # Discount factor
+gae_lambda: 0.95            # GAE lambda parameter
+clip_eps: 0.2               # PPO clipping parameter
+scale_clip_eps: false       # Whether to dynamically scale clip_eps
+ent_coef: 0.003             # Entropy regularization coefficient
+vf_coef: 0.5                # Value function loss coefficient
+
+
+# Network Architecture
+
+activation: ReLU            # Activation function
+fc_dim_size: 64             # Fully connected layer dimension
+
+
+# Environment Configuration
+
+env_name: MountainCar-v0    # Gymnax environment name
+seed: 0                     # Random seed
+num_seeds: 2                # Number of parallel seeds to run (reduced from 10)
+
+
+# Logging & Checkpointing
+
+project: optimize_old        # W&B project name
+job_type: ppo_ano_baseline           # W&B job type
+wandb_mode: online          # W&B mode: online, offline, disabled

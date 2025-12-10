@@ -4,7 +4,7 @@
 
 set -e
 
-eps_values=(1e-8 5e-3 1e-2)
+eps_values=(2e-3 1e-2 5e-2)
 
 for eps in "${eps_values[@]}"; do
   echo "Running Yogi PPO with eps=${eps}"

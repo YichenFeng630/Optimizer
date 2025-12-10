@@ -4,7 +4,7 @@
 
 set -e
 
-lr_values=(5e-5 1e-4 3e-4 1e-3 3e-3 6e-3 1e-2)
+lr_values=(8e-3 1e-2 2e-2 4e-2)
 
 for lr in "${lr_values[@]}"; do
   echo "Running Yogi PPO with lr=${lr}"

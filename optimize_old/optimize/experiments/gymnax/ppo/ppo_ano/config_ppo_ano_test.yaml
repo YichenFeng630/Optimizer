@@ -1,0 +1,38 @@
+# ANO (Adaptive Normalized Optimizer) Configuration for PPO - QUICK TEST
+# Small parameters for quick testing
+
+total_timesteps: 1e5        # Very small for testing
+num_envs: 4                 # Reduced from 16
+num_steps: 128              # Reduced from 2048
+num_minibatches: 2          # Reduced from 4
+update_epochs: 2            # Reduced from 16
+
+optimizer: ano              # Use ANO optimizer
+lr: 3e-4
+anneal_lr: false             # Disable scheduling for quick test
+max_grad_norm: 1.0
+
+beta_1: 0.92                
+beta_2: 0.999               
+eps: 1e-8
+weight_decay: 0.0
+logarithmic_schedule: false
+
+gamma: 0.99
+gae_lambda: 0.95
+clip_eps: 0.2
+scale_clip_eps: false
+ent_coef: 0.003
+vf_coef: 0.5
+
+activation: ReLU
+fc_dim_size: 64
+
+env_name: MountainCar-v0
+seed: 0
+num_seeds: 1
+
+# Additional for Hydra + W&B
+job_type: ppo_ano_test
+project: optimizer
+wandb_mode: disabled        # Disable W&B for quick test

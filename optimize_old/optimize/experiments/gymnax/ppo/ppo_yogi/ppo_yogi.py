@@ -11,7 +11,7 @@ PPO (Proximal Policy Optimization) using Yogi优化器版本。
 """
 import os
 
-# 为了结果可复现（可能牺牲一点速度）
+# 为了结果可复现，启用 XLA GPU 确定性操作
 os.environ["XLA_FLAGS"] = "--xla_gpu_deterministic_ops=true"
 
 import jax
@@ -330,12 +330,18 @@ def make_train(config):
                     cos_sim_mu = 0.0
                     mu_norm = 0.0
                     nu_norm = 0.0
-                    if hasattr(updated_train_state.opt_state, '__getitem__') and len(updated_train_state.opt_state) > 1:
-                        opt_inner = updated_train_state.opt_state[1][0]
-                        if hasattr(opt_inner, 'mu') and hasattr(opt_inner, 'nu'):
-                            mu_norm = pytree_norm(opt_inner.mu)
-                            nu_norm = pytree_norm(opt_inner.nu)
-                            cos_sim_mu = cosine_similarity(grads, opt_inner.mu)
+                    try:
+                        if (hasattr(updated_train_state.opt_state, '__getitem__') 
+                            and len(updated_train_state.opt_state) > 1):
+                            opt_inner = updated_train_state.opt_state[1]
+                            if isinstance(opt_inner, (list, tuple)) and len(opt_inner) > 0:
+                                opt_inner = opt_inner[0]
+                            if hasattr(opt_inner, 'mu') and hasattr(opt_inner, 'nu'):
+                                mu_norm = pytree_norm(opt_inner.mu)
+                                nu_norm = pytree_norm(opt_inner.nu)
+                                cos_sim_mu = cosine_similarity(grads, opt_inner.mu)
+                    except (KeyError, IndexError, TypeError):
+                        pass  # 访问失败就跳过
 
                     cos_sim_clamped = jnp.clip(cos_sim, -1.0, 1.0)
                     gradient_angle_deg = jnp.arccos(cos_sim_clamped) * 180.0 / jnp.pi
