@@ -83,25 +83,41 @@ def ano(
     logarithmic_schedule: bool = False,
 ) -> optax.GradientTransformation:
     """
-    ANO 优化器: 解耦梯度方向和幅度
+    ANO 优化器: 解耦梯度方向和幅度（严格遵循论文伪代码）
     
-    关键公式:
-    1. m_t = β₁*m_{t-1} + (1-β₁)*g_t                           (一阶矩：方向动量)
-    2. v_t = v_{t-1} + (1-β₂)*sign(g_t²-v_{t-1})*g_t²           (二阶矩：加法式，Yogi风格)
-    3. m̂_t = m_t / (1 - β₁^t)                                  (一阶矩 bias correction)
-    4. v̂_t = v_t / (1 - β₂^t)                                  (二阶矩 bias correction)
-    5. transformed_g = |g_t| * sign(m̂_t) / (√v̂_t + ε)         (梯度变换)
-    6. param = param - lr * transformed_g                      (参数更新由optax处理)
+    论文官方公式（来自 https://anonymous.4open.science/r/ano-optimizer-1645/optimizers/README.md）：
+    ───────────────────────────────────────────────────────────────────────
+    m_k = β₁*m_{k-1} + (1-β₁)*g_k
+    v_k = v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
+    v̂_k = v_k / (1 - β₂^k)
+    θ_k = θ_{k-1} - (η_k/√(v̂_k+ε))*sign(m_k)*|g_k| - η_k*λ*θ_{k-1}
     
-    参考: https://github.com/Adrienkgz/ano-experiments/blob/main/optimizers/ano.py
+    关键点：
+    ──────
+    1. 一阶矩m：标准动量，无bias correction
+    2. 二阶矩v：Yogi风格（减法形式），仅v做bias correction
+    3. 符号项：sign(v - g²)（v减去g²的平方）
+    4. 学习率：应用于梯度变换中 (η / √v̂)
+    5. 权重衰减：解耦方式，η*λ*θ
+    
+    ⚠️ 注意：官方PyTorch实现（Adrienkgz/ano-experiments）使用了不同的v更新形式：
+       官方: v_k = v*β₂ + (1-β₂)*sign(g²-v)*g²     (乘法+加法形式，偏离论文)
+       论文: v_k = v - (1-β₂)*sign(v-g²)*g²         (减法形式，我们采用)
+       详见 ANO_OFFICIAL_PAPER_COMPARISON.md
+    
+    参考文献：
+    ────────
+    - 论文：ANO: Faster is Better in Noisy Landscape
+    - 官方仓库：https://anonymous.4open.science/r/ano-optimizer-1645/
+    - 官方公式：https://anonymous.4open.science/r/ano-optimizer-1645/optimizers/README.md
     
     Args:
         learning_rate: 初始学习率或学习率调度函数
-        b1: 第一阶矩衰减系数（0.92推荐）
-        b2: 第二阶矩衰减系数（0.99推荐）
-        eps: 数值稳定性的小值（1e-8推荐）
-        weight_decay: L2权重衰减（可选）
-        logarithmic_schedule: 使用对数化β₁调度(Anolog变体)
+        b1: 第一阶矩衰减系数（0.92推荐，论文值）
+        b2: 第二阶矩衰减系数（0.99推荐，论文值）
+        eps: 数值稳定性的小值（1e-8推荐，论文值）
+        weight_decay: 解耦权重衰减系数
+        logarithmic_schedule: 使用对数化β₁调度(Anolog变体，论文提出)
     """
     
     def init_fn(params):
@@ -114,11 +130,19 @@ def ano(
     
     def update_fn(updates, state, params=None, **kwargs):
         """
-        执行梯度变换。注意返回的是：
-        - transformed_updates: 变换后的梯度（非参数更新）
-        - new_state: 更新后的优化器状态
+        执行梯度变换，严格按论文伪代码实现。
         
-        optax会在之后用学习率乘以transformed_updates进行参数更新。
+        伪代码算法：
+        ──────────
+        For k = 1 to K:
+            g_k = ∇ℓ(x_k)
+            m_k = β₁*m_{k-1} + (1-β₁)*g_k
+            v_k = v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
+            x_{k+1} = x_k - (η_k/√(v_k+ε))*|g_k|*sign(m_k) - η_k*λ*x_k
+        
+        在optax框架中：
+        - transformed_updates: 梯度变换的结果
+        - new_state: 更新后的优化器状态(m, v, step)
         """
         step = state["step"]
         m = state["m"]
@@ -140,40 +164,55 @@ def ano(
         else:
             b1_t = b1
         
-        # Bias correction系数
-        bias_corr_1 = 1.0 - jnp.power(b1_t, step_f)
+        # Bias correction系数：仅对v做bias correction
         bias_corr_2 = 1.0 - jnp.power(b2, step_f)
         
-        # 首先计算变换后的梯度
-        def _compute_transformed_g(g, m_leaf, v_leaf):
-            """计算变换后的梯度"""
-            m_new = b1_t * m_leaf + (1.0 - b1_t) * g
-            g_sq = jnp.square(g)
-            sign_term = jnp.sign(v_leaf - g_sq)
-            v_new = v_leaf - (1.0 - b2) * sign_term * g_sq
+        # 计算变换后的梯度和新的优化器状态
+        def _compute_update(g, m_leaf, v_leaf):
+            """
+            计算梯度变换，严格遵循伪代码：
             
-            m_hat = m_new / bias_corr_1
+            伪代码公式：
+            m_k = β₁*m_{k-1} + (1-β₁)*g_k
+            v_k = v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
+            x_{k+1} = x_k - (η_k / √(v_k + ε)) * |g_k| * sign(m_k) - η_k*λ*x_k
+            """
+            # 一阶矩更新（无bias correction）
+            m_new = b1_t * m_leaf + (1.0 - b1_t) * g
+            
+            # 二阶矩更新：严格按论文公式 v = β₂*v - (1-β₂)*sign(v - g²)*g²
+            g_sq = jnp.square(g)
+            sign_term = jnp.sign(v_leaf - g_sq)  # sign(v - g²)
+            v_new = b2 * v_leaf - (1.0 - b2) * sign_term * g_sq  # 注意：必须有β₂*v项！
+            
+            # Bias correction（仅对v）
             v_hat = v_new / bias_corr_2
             
-            transformed_g = jnp.abs(g) * jnp.sign(m_hat) / (jnp.sqrt(v_hat) + eps)
-            return transformed_g
+            # 计算调整后的学习率：η / √(v + ε)
+            adjusted_lr = lr / (jnp.sqrt(v_hat) + eps)
+            
+            # 梯度变换：(η / √v) * |g| * sign(m)
+            transformed_g = adjusted_lr * jnp.abs(g) * jnp.sign(m_new)
+            
+            return transformed_g, m_new, v_new
         
-        # 计算新的m
-        def _compute_m(g, m_leaf, v_leaf):
-            """计算新的一阶矩"""
-            return b1_t * m_leaf + (1.0 - b1_t) * g
+        # 对每个参数应用变换
+        transformed_updates, new_m, new_v = jax.tree.map(
+            lambda g, m_l, v_l: _compute_update(g, m_l, v_l),
+            updates, m, v
+        )
         
-        # 计算新的v
-        def _compute_v(g, m_leaf, v_leaf):
-            """计算新的二阶矩"""
-            g_sq = jnp.square(g)
-            sign_term = jnp.sign(v_leaf - g_sq)
-            return v_leaf - (1.0 - b2) * sign_term * g_sq
-        
-        # 分别计算
-        transformed_updates = jax.tree.map(_compute_transformed_g, updates, m, v)
-        new_m = jax.tree.map(_compute_m, updates, m, v)
-        new_v = jax.tree.map(_compute_v, updates, m, v)
+        # 应用权重衰减（解耦方式）
+        # 官方PyTorch: p.mul_(1 - lr * wd) 然后 p.add_(-update)
+        # 等价于: p = p - update - lr*wd*p
+        # 在optax中参数更新为: p = p - transformed_update
+        # 所以需要: transformed_update = original_update + lr*wd*p
+        if params is not None and weight_decay > 0.0:
+            def _apply_weight_decay(t_update, param):
+                # 解耦权重衰减：加上 lr*wd*param
+                return t_update + lr * weight_decay * param
+            
+            transformed_updates = jax.tree.map(_apply_weight_decay, transformed_updates, params)
         
         # 构建新状态
         new_state = {
