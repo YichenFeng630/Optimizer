@@ -44,7 +44,7 @@ def test_ano_decoupling():
     
     opt_state = tx.init(params)
     
-    print("\n✅ ANO Optimizer initialized")
+    print("ANO Optimizer initialized")
     print(f"  opt_state keys: {opt_state.keys() if hasattr(opt_state, 'keys') else 'tuple'}")
     
     # 执行一步优化
@@ -60,14 +60,14 @@ def test_ano_decoupling():
         print()
     
     print("=" * 60)
-    print("✅ ANO Test Complete!")
+    print(" ANO Test Complete!")
     print("=" * 60)
-    print("\n📊 Key Features Verified:")
+    print("Key Features Verified:")
     print("  ✓ Gradient direction control: sign(momentum)")
     print("  ✓ Gradient magnitude: absolute value of gradient")
     print("  ✓ Additive 2nd moment: Yogi-style update")
     print("  ✓ Adaptive learning rate: lr / sqrt(v)")
-    print("\n💡 ANO 特性:")
+    print("ANO 特性:")
     print("  • 在噪声环境中更鲁棒")
     print("  • 方向由动量控制，幅度由梯度控制")
     print("  • 二阶矩使用加法型更新，改善稀疏性")
@@ -77,6 +77,6 @@ if __name__ == "__main__":
     try:
         test_ano_decoupling()
     except Exception as e:
-        print(f"\n❌ Test failed with error:\n{e}")
+        print(f" Test failed with error:\n{e}")
         import traceback
         traceback.print_exc()

@@ -1,41 +1,62 @@
 # PPO with ANO Optimizer
 
-Official implementation of PPO (Proximal Policy Optimization) using ANO (Adaptive Normalized Optimizer).
+Complete implementation of PPO (Proximal Policy Optimization) using ANO (Adaptive Normalized Optimizer).
 
-Reference: [ANO: Faster is Better in Noisy Landscape](https://github.com/Adrienkgz/ano-experiments)
+**Paper**: [ANO: Faster is Better in Noisy Landscape](https://anonymous.4open.science/r/ano-optimizer-1645/)
 
-## Overview
+## Algorithm Overview
 
-**ANO** is a novel optimizer that decouples the **direction** and **magnitude** of parameter updates:
+**ANO** decouples gradient **direction** and **magnitude** for robust optimization in noisy landscapes:
 
-- **Momentum** applied exclusively to **directional smoothing**: $m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t$
-- **Step size** uses **instantaneous gradient magnitudes**: $|g_t|$  
-- **Second-moment** estimation uses **additive update** (Yogi-style): $v_t = v_{t-1} + (1-\beta_2) \text{sign}(g_t^2 - v_{t-1}) g_t^2$
+### Core Formula (Paper)
+$$\begin{aligned}
+m_k &= \beta_1 m_{k-1} + (1-\beta_1) g_k \\
+v_k &= v_{k-1} - (1-\beta_2)\operatorname{sign}(v_{k-1}-g_k^2) g_k^2 \\
+\hat v_k &= \frac{v_k}{1-\beta_2^k} \\
+\theta_k &= \theta_{k-1} - \frac{\eta_k}{\sqrt{\hat v_k} + \epsilon}\operatorname{sign}(m_k)|g_k| - \eta_k \lambda\theta_{k-1}
+\end{aligned}$$
 
-**Update formula**: 
-$$\text{param} \gets \text{param} - \text{lr} \cdot |g_t| \cdot \text{sign}(m_t) / (\sqrt{v_t} + \epsilon)$$
+### Key Properties
+- **Momentum** smooths gradient **direction**: $\operatorname{sign}(m_k)$
+- **Magnitude** uses **original gradient**: $|g_k|$ (not momentum-averaged)
+- **Second moment** uses **additive update** (Yogi-style): subtractive not multiplicative
+- **Bias correction** applied only to $v_k$ (not to $m_k$)
+- **Decoupled weight decay**: $- \eta_k \lambda\theta_{k-1}$
 
-This decoupling improves **robustness to gradient noise** while retaining the simplicity and efficiency of first-order methods.
+## Implementation Details
 
-## Files
+### Files
 
-- **ppo_ano.py** (715 lines)
-  - Complete PPO implementation with ANO optimizer
-  - Factory function: `make_train(config)` → `train(rng, exp_id)`
-  - ANO optimizer: Custom JAX implementation using Optax API
-  - Full PPO pipeline: rollout collection → GAE → multi-epoch updates
-  - Gradient statistics, W&B logging integration
-  
-- **config_ppo_ano.yaml**
-  - Default hyperparameters (aligned with ppo_yogi)
-  - ANO-specific parameters: `beta_1` (0.92), `beta_2` (0.99), `eps`, `weight_decay`, `logarithmic_schedule`
-  
-- **sweep_ano_beta.sh** (executable)
-  - Parameter sweep script: β₁ ∈ {0.92, 0.85, 0.7, 0.5} × β₂ ∈ {0.99, 0.95, 0.9, 0.8}
-  - 16 total experiments with automatic job management
+| File | Purpose |
+|------|---------|
+| **ppo_ano.py** (683 lines) | Complete PPO + ANO implementation in JAX/Flax |
+| **config_ppo_ano.yaml** | Default hyperparameters and training config |
+| **config_ppo_ano_test.yaml** | Quick test configuration |
+| **sweep_ano_beta.sh** | Parameter sweep script for β₁ and β₂ |
+| **test_ano_optimizer.py** | Unit test for ANO optimizer correctness |
 
-- **config_ppo_ano_test.yaml**
-  - Reduced parameters for quick testing and debugging
+### Key Components in ppo_ano.py
+
+1. **ANO Optimizer** (lines 77-238)
+   - JAX implementation using Optax GradientTransformation API
+   - Separate functions for each update component:
+     - `_compute_transformed_g()`: gradient transformation with sign/magnitude decoupling
+     - `_compute_m()`: first moment (momentum) update
+     - `_compute_v()`: second moment (Yogi-style) update
+   - Supports Anolog variant with logarithmic β₁ schedule
+
+2. **Training Loop** (lines 240-680)
+   - `make_train(config)` factory function
+   - Rollout collection via vectorized environment steps
+   - GAE advantage calculation
+   - Multi-epoch parameter updates with minibatching
+   - W&B logging integration
+   - Gradient statistics tracking
+
+3. **Data Structures**
+   - `Transition`: Single rollout step (obs, action, reward, etc.)
+   - `RunnerState`: Environment and training state
+   - `Updatestate`: Batch state for minibatch updates
 
 ## Running
 
@@ -57,9 +78,7 @@ python ppo_ano.py \
 ### Quick Test
 ```bash
 python ppo_ano.py \
-  total_timesteps=1e5 \
-  num_envs=4 \
-  num_steps=128 \
+  --config-name=config_ppo_ano_test \
   wandb_mode=disabled
 ```
 
@@ -68,77 +87,118 @@ python ppo_ano.py \
 bash sweep_ano_beta.sh
 ```
 
-## Algorithm Details
-
-### ANO Variants
-
-**Standard ANO**: β₁ is fixed (typically 0.92)
-
-**Anolog** (Optional): Dynamic β₁ schedule - set `logarithmic_schedule: true`
-- Formula: $\beta_1(t) = 1 - \frac{1}{\log(\max(2, t))}$
-- Expands momentum window over time for improved noise attenuation
-
 ## Configuration
 
-**Key ANO parameters** in `config_ppo_ano.yaml`:
+### ANO Parameters (config_ppo_ano.yaml)
 
 ```yaml
-optimizer: ano                  # Optimizer selection
-lr: 3e-4                       # Learning rate
-beta_1: 0.92                   # Momentum decay (0.92-0.95 typical)
-beta_2: 0.999                  # Second moment decay
-eps: 1e-8                      # Numerical stability epsilon
-weight_decay: 0.0              # L2 regularization
-logarithmic_schedule: false    # Enable Anolog variant
+optimizer: ano                  # Use ANO optimizer
+lr: 3e-4                        # Learning rate
+beta_1: 0.92                    # Momentum decay (paper default)
+beta_2: 0.99                    # Second moment decay (paper default)
+eps: 1e-8                       # Numerical stability (paper default)
+weight_decay: 0.0               # Decoupled weight decay
+logarithmic_schedule: false     # Enable Anolog variant (dynamic β₁)
 ```
 
-**PPO parameters** (unchanged from ppo_yogi):
+### PPO Hyperparameters
+
 ```yaml
-gamma: 0.99                    # Discount factor
-gae_lambda: 0.95              # GAE decay
-clip_eps: 0.2                 # PPO clipping range
-ent_coef: 0.003               # Entropy regularization
-vf_coef: 0.5                  # Value loss coefficient
+# Environment and rollout
+total_timesteps: 2e7            # Total training steps
+num_envs: 16                    # Parallel environments
+num_steps: 512                  # Rollout length
+num_minibatches: 4              # Minibatch count
+update_epochs: 4                # Epochs per update
+
+# PPO algorithm
+gamma: 0.99                     # Discount factor
+gae_lambda: 0.95                # GAE exponential smoothing
+clip_eps: 0.2                   # PPO clipping range
+ent_coef: 0.003                 # Entropy coefficient
+vf_coef: 0.5                    # Value loss coefficient
+
+# Learning rate schedule
+anneal_lr: true                 # Decay learning rate linearly
+
+# Logging and reproducibility
+seed: 42
+num_seeds: 1
+wandb_mode: online              # W&B mode: online/offline/disabled
 ```
+
+## Algorithm Variants
+
+### Standard ANO
+Fixed $\beta_1 = 0.92$ (recommended for most tasks)
+
+### Anolog (Dynamic β₁)
+Enable with: `logarithmic_schedule: true`
+- $\beta_1(t) = 1 - \frac{1}{\log(\max(2, t))}$
+- Progressively decreases momentum decay (expands momentum window)
+- Better noise attenuation in early training
+
+## Key Design Decisions
+
+1. **Yogi-style v update (subtractive)**
+   - Avoids exponential explosion in second moment
+   - Better numerical stability than standard Adam
+
+2. **No bias correction for m**
+   - First moment directly used for sign without correction
+   - Empirically more effective for sign-based direction
+
+3. **Decoupled weight decay**
+   - Applied separately from gradient update
+   - Matches AdamW style regularization
+   - Controlled via `weight_decay` parameter
+
+4. **Pure JAX implementation**
+   - Efficient compilation with JAX JIT
+   - Compatible with Flax TrainState
+   - Fully differentiable and vectorizable
 
 ## Logging & Monitoring
 
-Training metrics logged to **Weights & Biases**:
-- Actor loss, critic loss, entropy
-- Episode returns and lengths
-- Gradient norms and cosine similarity
-- Network parameter statistics
-- All PPO diagnostics
+W&B logs all training metrics:
+- **PPO diagnostics**: actor loss, value loss, entropy, KL divergence
+- **Returns**: episode return, episode length, cumulative return
+- **Gradients**: global norm, per-layer statistics
+- **Hyperparameters**: learning rate, clipping range, all optimizer configs
 
-Disable W&B for quick tests:
+Disable W&B:
 ```bash
 python ppo_ano.py wandb_mode=disabled
 ```
 
-## Alignment with ppo_yogi
+## Verification & Validation
 
-- ✅ Identical data structures and factory pattern
-- ✅ Same PPO algorithm (rollout, GAE, clipping)
-- ✅ Compatible configuration system
-- ✅ Matching gradient statistics and logging
-- ✅ Drop-in replacement optimizer
+### Paper Algorithm Compliance
+- ✅ First moment: $m_k = \beta_1 m_{k-1} + (1-\beta_1) g_k$
+- ✅ Second moment: $v_k = v_{k-1} - (1-\beta_2)\operatorname{sign}(v_{k-1}-g_k^2) g_k^2$
+- ✅ Update: $\theta_k = \theta_{k-1} - \frac{\eta_k}{\sqrt{\hat v_k} + \epsilon}\operatorname{sign}(m_k)|g_k|$
+- ✅ Weight decay: Decoupled formulation
 
-## Comparison with Other Optimizers
+See [ANO_ALGORITHM_VERIFICATION.md](../../../../../../ANO_ALGORITHM_VERIFICATION.md) for detailed verification.
 
-| Optimizer | Momentum | 2nd Moment | Update Rule | Robustness |
-|-----------|----------|-----------|-------------|-----------|
-| Adam | Yes (exp avg) | Exp avg sq | lr × grad / (√v + ε) | Good |
-| Yogi | Yes (exp avg) | Additive | lr × grad / (√v + ε) | Better |
-| **ANO** | **Yes (sign-based)** | **Additive** | **lr × \|grad\| × sign(m) / (√v + ε)** | **Best** |
+## Comparison with Related Work
+
+| Optimizer | Direction | Magnitude | 2nd Moment | Key Difference |
+|-----------|-----------|-----------|-----------|---|
+| Adam | Momentum | Momentum | Exp average | Both from momentum |
+| Yogi | Momentum | Gradient | Additive | Different second moment |
+| **ANO** | **Sign(Momentum)** | **Gradient** | **Additive** | **Fully decoupled** |
+
+## Testing
+
+### Unit Test
+```bash
+python test_ano_optimizer.py
+```
+Verifies ANO optimizer correctness with sign-magnitude decoupling.
 
 ## References
 
-- Paper: [ANO: Faster is Better in Noisy Landscape](https://doi.org/10.5281/zenodo.16422081)
-- Official implementation: https://github.com/Adrienkgz/ano-optimizer
-- Related frameworks: ppo_yogi, ppo_beta, ppo_grad
-
-## Notes
-
-- Currently using Adam as a proxy for quick testing; full ANO implementation can be added via custom JAX GradientTransformation
-- Aligns with ppo_yogi structure for easy comparison
-- Supports both discrete and continuous action spaces (currently set to discrete for MountainCar)
+- **Paper**: [ANO: Faster is Better in Noisy Landscape](https://anonymous.4open.science/r/ano-optimizer-1645/)
+- **Official Code**: https://anonymous.4open.science/r/ano-optimizer-1645/optimizers/ano.py
+- **Related PPO Implementations**: ppo_yogi, ppo_adam, ppo_lion

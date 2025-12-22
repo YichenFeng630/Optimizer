@@ -1,23 +1,17 @@
 """
-PPO (Proximal Policy Optimization) using ANO (Adaptive Normalized Optimizer) 版本。
+PPO with ANO (Adaptive Normalized Optimizer).
 
-严格遵循原始 `ppo_yogi.py` 结构：
+Structure:
 1. make_train(config) -> train(rng, exp_id)
-2. 内部包含 rollout 收集、GAE 优势计算、多个 epoch & minibatch 更新
-3. 使用 TrainState 封装参数与优化器状态
-4. 增加优化器分支: ano (Sign-Magnitude Decoupled Optimizer)
+2. Includes rollout collection, GAE advantage calculation, multi-epoch & minibatch updates
+3. TrainState for parameter and optimizer state management
+4. ANO: Sign-Magnitude Decoupled Optimizer
 
-ANO 关键特性 (参考 https://github.com/Adrienkgz/ano-experiments):
-- 对梯度方向和梯度幅度解耦处理
-- 动量仅作用于梯度方向（sign），幅度使用原始梯度的绝对值
-- 加法型第二矩更新（受 Yogi 启发）
-- 公式: transformed_g = |g| * sign(m̂) / (√v̂ + ε)，然后 param = param - lr * transformed_g
-
-额外添加了中文注释，帮助理解每个步骤。
+Reference: https://github.com/Adrienkgz/ano-experiments
 """
 import os
 
-# 为了结果可复现，启用 XLA GPU 确定性操作
+# Enable deterministic GPU operations for reproducibility
 os.environ["XLA_FLAGS"] = "--xla_gpu_deterministic_ops=true"
 
 import jax
@@ -35,12 +29,12 @@ import optax
 import gymnax
 from optimize.utils.jax_utils import pytree_norm
 
-# 全局日志记录器（用于 io_callback）
+# Global logger for io_callback
 LOGGER = None
 
-# ============================================================
-# 数据结构
-# ============================================================
+# 
+# Data Structures
+# 
 class Transition(NamedTuple):
     obs: jnp.ndarray
     action: jnp.ndarray
@@ -71,9 +65,9 @@ class Updatestate(NamedTuple):
     rng: Array
 
 
-# ============================================================
-# ANO (Adaptive Normalized Optimizer) - 正确实现
-# ============================================================
+# 
+# ANO (Adaptive Normalized Optimizer) - implementation- but note there are differences from the official PyTorch version
+# 
 def ano(
     learning_rate,
     b1: float = 0.92,
@@ -100,7 +94,7 @@ def ano(
     4. 学习率：应用于梯度变换中 (η / √v̂)
     5. 权重衰减：解耦方式，η*λ*θ
     
-    ⚠️ 注意：官方PyTorch实现（Adrienkgz/ano-experiments）使用了不同的v更新形式：
+     注意：官方PyTorch实现（Adrienkgz/ano-experiments）使用了不同的v更新形式：
        官方: v_k = v*β₂ + (1-β₂)*sign(g²-v)*g²     (乘法+加法形式，偏离论文)
        论文: v_k = v - (1-β₂)*sign(v-g²)*g²         (减法形式，我们采用)
        详见 ANO_OFFICIAL_PAPER_COMPARISON.md
@@ -121,101 +115,68 @@ def ano(
     """
     
     def init_fn(params):
-        """初始化优化器状态"""
+        """Initialize optimizer state."""
         return {
-            "m": jax.tree.map(jnp.zeros_like, params),   # 一阶矩
-            "v": jax.tree.map(jnp.zeros_like, params),   # 二阶矩
-            "step": jnp.array(0, dtype=jnp.int32),       # 步数计数
+            "m": jax.tree.map(jnp.zeros_like, params),  # First moment
+            "v": jax.tree.map(jnp.zeros_like, params),  # Second moment
+            "step": jnp.array(0, dtype=jnp.int32),      # Step counter
         }
     
     def update_fn(updates, state, params=None, **kwargs):
         """
-        执行梯度变换，严格按论文伪代码实现。
-        
-        伪代码算法：
-        ──────────
-        For k = 1 to K:
-            g_k = ∇ℓ(x_k)
-            m_k = β₁*m_{k-1} + (1-β₁)*g_k
-            v_k = v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
-            x_{k+1} = x_k - (η_k/√(v_k+ε))*|g_k|*sign(m_k) - η_k*λ*x_k
-        
-        在optax框架中：
-        - transformed_updates: 梯度变换的结果
-        - new_state: 更新后的优化器状态(m, v, step)
+        Apply gradient transformation per paper algorithm.
+        Returns transformed updates and new optimizer state.
         """
         step = state["step"]
         m = state["m"]
         v = state["v"]
         
-        # 处理学习率调度
-        if callable(learning_rate):
-            lr = learning_rate(step)
-        else:
-            lr = learning_rate
-        
+        # Handle learning rate schedule
+        lr = learning_rate(step) if callable(learning_rate) else learning_rate
         step_f = step.astype(jnp.float32) + 1.0
         
-        # 处理对数化β₁ (Anolog变体)
+        # Anolog variant: logarithmic β₁ schedule
         if logarithmic_schedule:
-            # β₁(t) = 1 - 1/log(max(2, t))
             step_safe = jnp.maximum(step_f, 2.0)
             b1_t = 1.0 - 1.0 / jnp.log(step_safe)
         else:
             b1_t = b1
         
-        # Bias correction系数：仅对v做bias correction
+        # Bias correction for v only
         bias_corr_2 = 1.0 - jnp.power(b2, step_f)
         
-        # 计算变换后的梯度
+        # Compute gradient transformation
         def _compute_transformed_g(g, m_leaf, v_leaf):
-            """计算梯度变换"""
-            # 一阶矩更新
             m_new = b1_t * m_leaf + (1.0 - b1_t) * g
-            
-            # 二阶矩更新：v = β₂*v - (1-β₂)*sign(v - g²)*g²
             g_sq = jnp.square(g)
             sign_term = jnp.sign(v_leaf - g_sq)
             v_new = b2 * v_leaf - (1.0 - b2) * sign_term * g_sq
-            
-            # Bias correction和学习率调整
             v_hat = v_new / bias_corr_2
             adjusted_lr = lr / (jnp.sqrt(v_hat) + eps)
-            
-            # 梯度变换：(η / √v) * |g| * sign(m)
-            transformed_g = adjusted_lr * jnp.abs(g) * jnp.sign(m_new)
-            return transformed_g
+            return adjusted_lr * jnp.abs(g) * jnp.sign(m_new)
         
-        # 计算新的m
+        # Compute first moment
         def _compute_m(g, m_leaf, v_leaf):
-            """计算新的一阶矩"""
             return b1_t * m_leaf + (1.0 - b1_t) * g
         
-        # 计算新的v
+        # Compute second moment (Yogi-style)
         def _compute_v(g, m_leaf, v_leaf):
-            """计算新的二阶矩"""
             g_sq = jnp.square(g)
             sign_term = jnp.sign(v_leaf - g_sq)
             return b2 * v_leaf - (1.0 - b2) * sign_term * g_sq
         
-        # 分别计算各个分量
+        # Compute all components
         transformed_updates = jax.tree.map(_compute_transformed_g, updates, m, v)
         new_m = jax.tree.map(_compute_m, updates, m, v)
         new_v = jax.tree.map(_compute_v, updates, m, v)
         
-        # 应用权重衰减（解耦方式）
-        # 官方PyTorch: p.mul_(1 - lr * wd) 然后 p.add_(-update)
-        # 等价于: p = p - update - lr*wd*p
-        # 在optax中参数更新为: p = p - transformed_update
-        # 所以需要: transformed_update = original_update + lr*wd*p
+        # Apply decoupled weight decay
         if params is not None and weight_decay > 0.0:
             def _apply_weight_decay(t_update, param):
-                # 解耦权重衰减：加上 lr*wd*param
                 return t_update + lr * weight_decay * param
-            
             transformed_updates = jax.tree.map(_apply_weight_decay, transformed_updates, params)
         
-        # 构建新状态
+        # Build new optimizer state
         new_state = {
             "m": new_m,
             "v": new_v,
@@ -227,9 +188,9 @@ def ano(
     return optax.GradientTransformation(init_fn, update_fn)
 
 
-# ============================================================
-# 工厂函数：根据 config 生成训练函数
-# ============================================================
+# 
+# Training Factory
+# 
 def make_train(config):
     env, env_params = gymnax.make(config["env_name"])
 
@@ -264,9 +225,8 @@ def make_train(config):
             init_x = jnp.zeros(obs.shape)
             network_params = network.init(_rng_net, init_x)
 
-            # 选择优化器 - 现在正确使用自定义的 ANO
+            # Select optimizer
             if config["optimizer"] == "ano":
-                # ANO: 符合论文的正确实现
                 tx = optax.chain(
                     optax.clip_by_global_norm(config["max_grad_norm"]),
                     ano(
@@ -309,7 +269,7 @@ def make_train(config):
                     optax.sgd(learning_rate=lr_schedule),
                 )
             else:
-                raise ValueError(f"未知 optimizer: {config['optimizer']}")
+                raise ValueError(f"Unknown optimizer: {config['optimizer']}")
 
             train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
             running_grad = jax.tree.map(jnp.zeros_like, network_params)
@@ -330,11 +290,11 @@ def make_train(config):
             rng=rng,
         )
 
-        # ========== 外层训练循环 ==========
+        #  外层训练循环 
         def _train_loop(runner_state, unused):
             initial_timesteps = runner_state.timesteps
 
-            # ========== 1. 收集 rollout ==========
+            # 1. Collect rollout 
             def _env_step(runner_state, unused):
                 train_state = runner_state.train_state
                 obs = runner_state.obs
@@ -397,7 +357,7 @@ def make_train(config):
                 config["num_steps"],
             )
 
-            # ========== 2. 计算 GAE ==========
+            #  2. Calculate GAE 
             train_state = runner_state.train_state
             last_obs = runner_state.obs
             _, last_value = network.apply(train_state.params, last_obs)
@@ -422,7 +382,7 @@ def make_train(config):
 
             advantages, targets = _calculate_gae(traj_batch, last_value)
 
-            # ========== 3. 多 epoch 更新 ==========
+            #  3. Multi-epoch update 
             def _update_epoch(update_state, unused):
                 train_state = update_state.train_state
                 running_grad = update_state.running_grad
@@ -571,7 +531,7 @@ def make_train(config):
                 config["update_epochs"],
             )
 
-            # ========== 4. 计算回报与统计 ==========
+            #  4. Calculation of metrics
             reward = traj_batch.reward
             done = traj_batch.new_done
             cumulative_return = runner_state.cumulative_return
@@ -677,9 +637,9 @@ def make_train(config):
     return train
 
 
-# ============================================================
-# 主函数 + Hydra
-# ============================================================
+# 
+# main + Hydra
+# 
 @hydra.main(version_base=None, config_path="./", config_name="config_ppo_ano")
 def main(config):
     try:

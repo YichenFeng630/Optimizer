@@ -1,13 +1,13 @@
 """
-验证论文公式和Adrienkgz PyTorch实现的数学等价性
+Verify the mathematical equivalence between the paper formula and Adrienkgz's PyTorch implementation
 """
 import numpy as np
 
 def paper_v_update(v_old, g, beta2):
     """
-    论文公式: v_k = β₂*v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
+    Paper formula: v_k = β₂*v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
     
-    注意：论文写的是 v_k = β₂*v_{k-1} - ...，不是 v_k = v_{k-1} - ...
+    Note: The paper states v_k = β₂*v_{k-1} - ..., not v_k = v_{k-1} - ...
     """
     g_sq = g**2
     sign_term = np.sign(v_old - g_sq)
@@ -16,7 +16,7 @@ def paper_v_update(v_old, g, beta2):
 
 def pytorch_v_update(v_old, g, beta2):
     """
-    PyTorch实现: v = v*β₂ + (1-β₂)*sign(g²-v)*g²
+    PyTorch implementation: v = v*β₂ + (1-β₂)*sign(g²-v)*g²
     """
     g_sq = g**2
     sign_term = np.sign(g_sq - v_old)
@@ -32,11 +32,6 @@ test_cases = [
     (0.5, 0.3, 0.92),
 ]
 
-print("=" * 80)
-print("ANO v-update 公式等价性验证")
-print("=" * 80)
-print()
-
 all_match = True
 for v_old, g, beta2 in test_cases:
     paper_result = paper_v_update(v_old, g, beta2)
@@ -46,15 +41,15 @@ for v_old, g, beta2 in test_cases:
     all_match = all_match and match
     
     print(f"v_old={v_old:.2f}, g={g:.2f}, g²={g**2:.2f}, β₂={beta2}")
-    print(f"  论文公式:    v_new = {paper_result:.6f}")
-    print(f"  PyTorch实现: v_new = {pytorch_result:.6f}")
-    print(f"  差异: {abs(paper_result - pytorch_result):.2e}")
-    print(f"  匹配: {'✓ YES' if match else '✗ NO'}")
+    print(f"  Paper formula:    v_new = {paper_result:.6f}")
+    print(f"  PyTorch implementation: v_new = {pytorch_result:.6f}")
+    print(f"  Difference: {abs(paper_result - pytorch_result):.2e}")
+    print(f"  Match: {'YES' if match else 'NO'}")
     print()
 
-print("=" * 80)
+
 if all_match:
-    print("结论: 两个公式在数学上 **完全等价** ✓")
+    print("mathematically equivalent")
 else:
-    print("结论: 两个公式 **不等价** ✗")
-print("=" * 80)
+    print("not equivalent")
+
