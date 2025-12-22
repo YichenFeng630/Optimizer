@@ -1,7 +1,7 @@
 # ANO 算法实现验证报告
 
 ## 总结
-✅ **当前实现完全符合论文算法**
+ **当前实现完全符合论文算法**
 
 ---
 
@@ -29,7 +29,7 @@ v_k &= \beta_2 v_{k-1} - (1-\beta_2)\operatorname{sign}(v_{k-1}-g_k^2) g_k^2 \\
 
 ## 当前实现的验证
 
-### 1️⃣ 一阶矩更新 ✅
+### 1 一阶矩更新 
 
 **论文公式:** $m_k = \beta_1 m_{k-1} + (1-\beta_1) g_k$
 
@@ -38,14 +38,13 @@ v_k &= \beta_2 v_{k-1} - (1-\beta_2)\operatorname{sign}(v_{k-1}-g_k^2) g_k^2 \\
 m_new = b1_t * m_leaf + (1.0 - b1_t) * g
 ```
 
-**验证结果:** ✅ 完全匹配
+**验证结果:**  完全匹配
 - `b1_t` 对应 $\beta_1$
 - `m_leaf` 对应 $m_{k-1}$
 - `g` 对应 $g_k$
 
 ---
-
-### 2️⃣ 二阶矩更新 ✅
+### 2 二阶矩更新 
 
 **论文公式:** $v_k = \beta_2 v_{k-1} - (1-\beta_2)\operatorname{sign}(v_{k-1}-g_k^2) g_k^2$
 
@@ -56,14 +55,14 @@ sign_term = jnp.sign(v_leaf - g_sq)            # $\operatorname{sign}(v_{k-1} - 
 v_new = b2 * v_leaf - (1.0 - b2) * sign_term * g_sq
 ```
 
-**验证结果:** ✅ 完全匹配
+**验证结果:** 完全匹配
 - `v_leaf` 对应 $v_{k-1}$
 - `sign_term` 对应符号项
 - 完整更新: $v_{k-1} - (1-\beta_2)\operatorname{sign}(v_{k-1}-g_k^2) g_k^2$
 
 ---
 
-### 3️⃣ Bias Correction ✅
+### 3 Bias Correction 
 
 **论文公式:** $\hat v_k = \frac{v_k}{1-\beta_2^k}$
 
@@ -73,13 +72,13 @@ bias_corr_2 = 1.0 - jnp.power(b2, step_f)   # $1 - \beta_2^k$
 v_hat = v_new / bias_corr_2                  # $\frac{v_k}{1-\beta_2^k}$
 ```
 
-**验证结果:** ✅ 完全匹配
+**验证结果:** 完全匹配
 - 仅对 $v$ 做 bias correction（不对 $m$ 做）
 - 这与论文设计一致
 
 ---
 
-### 4️⃣ 梯度变换 ✅
+### 4 梯度变换 
 
 **论文公式:** $\theta_k = \theta_{k-1} - \frac{\eta_k}{\sqrt{\hat v_k} + \epsilon}\operatorname{sign}(m_k)|g_k| - \eta_k \lambda\theta_{k-1}$
 
@@ -89,14 +88,14 @@ adjusted_lr = lr / (jnp.sqrt(v_hat) + eps)         # $\frac{\eta_k}{\sqrt{\hat v
 transformed_g = adjusted_lr * jnp.abs(g) * jnp.sign(m_new)  # 上式乘以 $\operatorname{sign}(m_k)|g_k|$
 ```
 
-**验证结果:** ✅ 完全匹配
+**验证结果:** 完全匹配
 - 梯度的符号由一阶矩 $\operatorname{sign}(m_k)$ 控制
 - 梯度的幅度由绝对值 $|g_k|$ 控制
 - 学习率自适应基于二阶矩 $\frac{\eta_k}{\sqrt{\hat v_k} + \epsilon}$
 
 ---
 
-### 5️⃣ 权重衰减 ✅
+### 5 权重衰减 
 
 **论文公式:** $- \eta_k \lambda\theta_{k-1}$（解耦权重衰减）
 
@@ -109,13 +108,13 @@ if params is not None and weight_decay > 0.0:
     transformed_updates = jax.tree.map(_apply_weight_decay, transformed_updates, params)
 ```
 
-**验证结果:** ✅ 完全匹配
+**验证结果:**  完全匹配
 - 采用解耦权重衰减（AdamW 风格）
 - 在参数更新中加入 $\eta_k \lambda\theta_{k-1}$ 项
 
 ---
 
-## Anolog 变体 ✅
+## Anolog 变体 
 
 论文中还提出了 Anolog 变体，使用时变的 $\beta_{1,k}$：
 
@@ -130,7 +129,7 @@ else:
     b1_t = b1
 ```
 
-**验证结果:** ✅ 完全匹配
+**验证结果:**  完全匹配
 - 当 `logarithmic_schedule=True` 时启用 Anolog 变体
 - 当 `logarithmic_schedule=False` 时使用标准 ANO
 
@@ -148,24 +147,7 @@ else:
 | $\lambda$ | 0.0 | $\geq 0$ | 权重衰减系数 |
 | 学习率调度 | False | - | 是否启用 Anolog 变体 |
 
-当前代码配置: ✅ **与论文推荐一致**
 
----
-
-## 结论
-
-✅ **当前 ANO 优化器实现完全符合论文官方算法**
-
-所有关键组件都已正确实现：
-- ✅ 一阶矩更新
-- ✅ 二阶矩更新（Yogi 风格）
-- ✅ Bias correction
-- ✅ 自适应学习率
-- ✅ 符号-幅度解耦
-- ✅ 权重衰减
-- ✅ Anolog 变体支持
-
----
 
 ## 参考资源
 
