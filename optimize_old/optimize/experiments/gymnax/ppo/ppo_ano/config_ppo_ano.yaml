@@ -54,4 +54,4 @@ num_seeds: 2                # Number of parallel seeds to run (reduced from 10)
 
 project: optimize_old        # W&B project name
 job_type: ppo_ano_baseline           # W&B job type
-wandb_mode: online          # W&B mode: online, offline, disabled
+wandb_mode: disabled          # W&B mode: online, offline, disabled

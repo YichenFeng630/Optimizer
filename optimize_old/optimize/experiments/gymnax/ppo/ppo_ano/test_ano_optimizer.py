@@ -26,14 +26,16 @@ def test_ano_decoupling():
     print(f"  grads['w'] = \n{grads['w']}")
     
     # 创建 ANO 优化器（简化版本）
+    import sys
+    sys.path.insert(0, '/home/yichen/optimizer')
     from optimize_old.optimize.experiments.gymnax.ppo.ppo_ano.ppo_ano import ano
     
     tx = optax.chain(
         optax.clip_by_global_norm(1.0),
         ano(
             learning_rate=0.001,
-            beta_1=0.92,
-            beta_2=0.99,
+            b1=0.92,
+            b2=0.99,
             eps=1e-8,
             weight_decay=0.0,
             logarithmic_schedule=False,

@@ -167,40 +167,41 @@ def ano(
         # Bias correction系数：仅对v做bias correction
         bias_corr_2 = 1.0 - jnp.power(b2, step_f)
         
-        # 计算变换后的梯度和新的优化器状态
-        def _compute_update(g, m_leaf, v_leaf):
-            """
-            计算梯度变换，严格遵循伪代码：
-            
-            伪代码公式：
-            m_k = β₁*m_{k-1} + (1-β₁)*g_k
-            v_k = v_{k-1} - (1-β₂)*sign(v_{k-1} - g_k²)*g_k²
-            x_{k+1} = x_k - (η_k / √(v_k + ε)) * |g_k| * sign(m_k) - η_k*λ*x_k
-            """
-            # 一阶矩更新（无bias correction）
+        # 计算变换后的梯度
+        def _compute_transformed_g(g, m_leaf, v_leaf):
+            """计算梯度变换"""
+            # 一阶矩更新
             m_new = b1_t * m_leaf + (1.0 - b1_t) * g
             
-            # 二阶矩更新：严格按论文公式 v = β₂*v - (1-β₂)*sign(v - g²)*g²
+            # 二阶矩更新：v = β₂*v - (1-β₂)*sign(v - g²)*g²
             g_sq = jnp.square(g)
-            sign_term = jnp.sign(v_leaf - g_sq)  # sign(v - g²)
-            v_new = b2 * v_leaf - (1.0 - b2) * sign_term * g_sq  # 注意：必须有β₂*v项！
+            sign_term = jnp.sign(v_leaf - g_sq)
+            v_new = b2 * v_leaf - (1.0 - b2) * sign_term * g_sq
             
-            # Bias correction（仅对v）
+            # Bias correction和学习率调整
             v_hat = v_new / bias_corr_2
-            
-            # 计算调整后的学习率：η / √(v + ε)
             adjusted_lr = lr / (jnp.sqrt(v_hat) + eps)
             
             # 梯度变换：(η / √v) * |g| * sign(m)
             transformed_g = adjusted_lr * jnp.abs(g) * jnp.sign(m_new)
-            
-            return transformed_g, m_new, v_new
+            return transformed_g
         
-        # 对每个参数应用变换
-        transformed_updates, new_m, new_v = jax.tree.map(
-            lambda g, m_l, v_l: _compute_update(g, m_l, v_l),
-            updates, m, v
-        )
+        # 计算新的m
+        def _compute_m(g, m_leaf, v_leaf):
+            """计算新的一阶矩"""
+            return b1_t * m_leaf + (1.0 - b1_t) * g
+        
+        # 计算新的v
+        def _compute_v(g, m_leaf, v_leaf):
+            """计算新的二阶矩"""
+            g_sq = jnp.square(g)
+            sign_term = jnp.sign(v_leaf - g_sq)
+            return b2 * v_leaf - (1.0 - b2) * sign_term * g_sq
+        
+        # 分别计算各个分量
+        transformed_updates = jax.tree.map(_compute_transformed_g, updates, m, v)
+        new_m = jax.tree.map(_compute_m, updates, m, v)
+        new_v = jax.tree.map(_compute_v, updates, m, v)
         
         # 应用权重衰减（解耦方式）
         # 官方PyTorch: p.mul_(1 - lr * wd) 然后 p.add_(-update)
